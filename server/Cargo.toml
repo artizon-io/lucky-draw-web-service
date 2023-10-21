@@ -1,0 +1,24 @@
+[package]
+name = "lucky-draw-web-service"
+description = "A web service for lucky draw"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = [
+  "artizon-io <mingsum.sam@gmail.com>"
+]
+
+[dependencies]
+axum = "0.6"
+hyper = { version = "0.14", features = ["full"] }
+tokio = { version = "1.17", features = ["full"] }
+sqlx = { version = "0.7.2", features = ["postgres", "runtime-tokio-rustls"] }
+tower = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+env_logger = "0.10.0"
+log = "0.4"
+utoipa = { version = "4.0.0", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "4.0.0", features = ["axum"] }
+utoipa-redoc = { version="1.0.0", features = ["axum"] }
+utoipa-rapidoc = { version = "1.0.0", features = ["axum"]}

@@ -19,7 +19,7 @@ CREATE TABLE campaign_coupon_types (
     last_drawn_date DATE,
 
     FOREIGN KEY (campaign_id) REFERENCES campaigns (id) ON DELETE RESTRICT,
-    CHECK (probability < 1),
+    CHECK (probability <= 1),
     CHECK (probability >= 0),
     CHECK (total_quota >= 0),
     CHECK (daily_quota >= 0),

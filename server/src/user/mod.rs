@@ -48,6 +48,7 @@ pub(super) async fn list_users(State(store): State<Arc<Store>>) -> Json<Vec<User
 
 #[derive(Serialize, Deserialize, ToSchema)]
 pub(super) struct CreateUserPayload {
+    #[schema(example = r"+852 1234 5678")]
     pub phone: String,
 }
 

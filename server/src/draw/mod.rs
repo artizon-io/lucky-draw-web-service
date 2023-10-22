@@ -57,23 +57,25 @@ pub(super) async fn draw(
 
     let today_date = chrono::Utc::now().naive_utc().date();
 
+    // Check if user has already drawn from this campaign today, if so, return error
+
     let enrolled_campaigns_cache_key =
         format!("user-{}:enrolled-campaigns:{}", payload.user_id, today_date);
 
     let enrolled_campaigns_cache: Vec<String> = redis
-        .get(enrolled_campaigns_cache_key.clone())
+        .lrange(enrolled_campaigns_cache_key.clone(), 0, -1)
         .await
         .unwrap();
 
-    print!(
-        r#"
-Cache {}
-{:#?}
-        "#,
-        enrolled_campaigns_cache_key, enrolled_campaigns_cache
-    );
-
     if enrolled_campaigns_cache.contains(&payload.campaign_id.to_string()) {
+        println!(
+            r#"
+Cache hit for {}
+{:#?}
+            "#,
+            enrolled_campaigns_cache_key, enrolled_campaigns_cache
+        );
+
         return (
             StatusCode::CONFLICT,
             Json(DrawError::Conflict(
@@ -84,6 +86,40 @@ Cache {}
     }
 
     let mut tx = db_pool.begin().await.unwrap();
+
+    let user_and_campaign_exists: bool = sqlx::query_scalar!(
+        "--sql
+            select exists(
+                select *
+                from users
+                where id = $1
+            ) and exists(
+                select *
+                from campaigns
+                where id = $2
+            );
+        ",
+        payload.user_id,
+        payload.campaign_id
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap()
+    .unwrap_or(false);
+
+    if !user_and_campaign_exists {
+        tx.rollback().await.unwrap();
+
+        return (
+            StatusCode::NOT_FOUND,
+            Json(DrawError::NotFound(
+                "Campaign or user doesn't exist".to_string(),
+            )),
+        )
+            .into_response();
+    }
+
+    // Check manually if user has already drawn from this campaign today if cache miss
 
     let drawn: bool = sqlx::query_scalar!(
         "--sql
@@ -103,7 +139,16 @@ Cache {}
     .unwrap_or(false);
 
     if drawn {
-        let _: String = redis
+        print!(
+            r#"
+Appending new entry to cache {}
+{:#?}
+            "#,
+            enrolled_campaigns_cache_key,
+            payload.campaign_id.to_string()
+        );
+
+        let _: i32 = redis
             .rpush(
                 enrolled_campaigns_cache_key.clone(),
                 payload.campaign_id.to_string(),
@@ -122,16 +167,21 @@ Cache {}
             .into_response();
     }
 
+    // Check if probability distribution of the campaign coupon types is cache
+
     let coupon_types_cache_key = format!("campaign-{}:prob-dist", payload.campaign_id);
 
-    let maybe_coupon_types_cache: Option<Vec<String>> =
-        redis.get(coupon_types_cache_key.clone()).await.unwrap();
+    let coupon_types_cache: Vec<String> = redis
+        .lrange(coupon_types_cache_key.clone(), 0, -1)
+        .await
+        .unwrap();
 
     let (coupon_type_ids, mut coupon_type_probabilities): (Vec<i32>, Vec<f32>) =
-        if let Some(coupon_types_cache) = maybe_coupon_types_cache {
+        // If cache hit, parse cache
+        if coupon_types_cache.len() > 0 {
             print!(
                 r#"
-Cache {}
+Cache hit for {}
 {:#?}
                 "#,
                 coupon_types_cache_key, coupon_types_cache
@@ -145,6 +195,7 @@ Cache {}
                 })
                 .unzip()
         } else {
+            // If cache miss, manually query from DB and write to cache
             let coupon_types = sqlx::query_as!(
                 CampaignCouponType,
                 "--sql
@@ -163,9 +214,8 @@ Cache {}
 
                 return (
                     StatusCode::NOT_FOUND,
-                    Json(DrawError::NotFound(
-                        "Campaign or user doesn't exist or there is no coupon types in the campaign"
-                            .to_string(),
+                    Json(DrawError::Conflict(
+                        "There is no coupon types in the campaign".to_string(),
                     )),
                 )
                     .into_response();
@@ -192,8 +242,8 @@ Writing to cache {}
                 coupon_types_cache_key, cache
             );
 
-            let _: String = redis
-                .set(coupon_types_cache_key.clone(), cache)
+            let _: i32 = redis
+                .rpush(coupon_types_cache_key.clone(), cache)
                 .await
                 .unwrap();
 
@@ -216,10 +266,36 @@ Index: {}
         coupon_type_probabilities, index
     );
 
+    // If the sampling lands on the final category (indicates no coupons),
+    // insert a draw record with no coupons
+
     if index + 1 == coupon_type_probabilities.len() {
-        tx.rollback().await.unwrap();
+        sqlx::query!(
+            "--sql
+                insert into draws (user_id, campaign_id, campaign_coupon_id)
+                values ($1, $2, null);
+            ",
+            payload.user_id,
+            payload.campaign_id
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+        tx.commit().await.unwrap();
+
+        print!(
+            r#"
+Appending new entry to cache {}
+{:#?}
+            "#,
+            enrolled_campaigns_cache_key, payload.campaign_id
+        );
+
         return (StatusCode::OK, Json(DrawResult { maybe_coupon: None })).into_response();
     }
+
+    // If the sampling lands on a coupon type, try deduct the coupon type's quota
 
     let coupon_type_id = &coupon_type_ids[index];
 
@@ -228,11 +304,11 @@ Index: {}
         "--sql
             update campaign_coupon_types
             set last_drawn_date = case
-                when (last_drawn_date is not null and last_drawn_date != CURRENT_DATE) then CURRENT_DATE
+                when (last_drawn_date is null or last_drawn_date != CURRENT_DATE) then CURRENT_DATE
                 else last_drawn_date
             end,
             current_daily_quota = case
-                when (last_drawn_date is not null and last_drawn_date != CURRENT_DATE) then daily_quota - 1
+                when (last_drawn_date is null or last_drawn_date != CURRENT_DATE) then daily_quota - 1
                 else current_daily_quota - 1
             end,
             current_quota = current_quota - 1
@@ -243,22 +319,6 @@ Index: {}
     )
     .fetch_one(&mut *tx)
     .await;
-
-    print!(
-        r#"
-Appending new entry to cache {}
-{:#?}
-        "#,
-        enrolled_campaigns_cache_key, payload.campaign_id
-    );
-
-    let _: i32 = redis
-        .append(
-            enrolled_campaigns_cache_key.clone(),
-            payload.campaign_id.to_string(),
-        )
-        .await
-        .unwrap();
 
     if let Err(_) = query {
         tx.rollback().await.unwrap();
@@ -275,8 +335,26 @@ Appending new entry to cache {}
         .await
         .unwrap();
 
+        print!(
+            r#"
+Appending new entry to cache {}
+{:#?}
+            "#,
+            enrolled_campaigns_cache_key, payload.campaign_id
+        );
+
+        let _: i32 = redis
+            .lpush(
+                enrolled_campaigns_cache_key.clone(),
+                payload.campaign_id.to_string(),
+            )
+            .await
+            .unwrap();
+
         return (StatusCode::OK, Json(DrawResult { maybe_coupon: None })).into_response();
     }
+
+    // If successfully deducted the coupon type's quota, insert a coupon record and a draw record
 
     let coupon = sqlx::query_as!(
         CampaignCoupon,
@@ -308,6 +386,22 @@ Appending new entry to cache {}
     .unwrap();
 
     tx.commit().await.unwrap();
+
+    print!(
+        r#"
+Appending new entry to cache {}
+{:#?}
+        "#,
+        enrolled_campaigns_cache_key, payload.campaign_id
+    );
+
+    let _: i32 = redis
+        .lpush(
+            enrolled_campaigns_cache_key.clone(),
+            payload.campaign_id.to_string(),
+        )
+        .await
+        .unwrap();
 
     (
         StatusCode::OK,

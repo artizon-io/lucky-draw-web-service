@@ -7,12 +7,13 @@ mod tests {
         http::{self, Method, Request, StatusCode},
     };
     use tower::ServiceExt;
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn create_list_delete_user() {
         let app = create_app().await;
 
-        let phone = "+852 0000 0000";
+        let phone = &Uuid::new_v4().to_string()[..20];
 
         let create_user_response = app
             .clone()

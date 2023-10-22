@@ -80,19 +80,7 @@ Rapidoc: {address}/rapidoc
 }
 
 pub async fn create_app() -> Router {
-    dotenv().ok();
-
-    let redis_client = redis::Client::open("redis://localhost/").expect("Redis connection failed");
-
-    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL missing in .env");
-    let db_pool = sqlx::postgres::PgPool::connect(&db_url).await.expect("Failed to connect to DB");
-
-    sqlx::migrate!("./migrations").run(&db_pool).await.expect("Failed to migrate DB");
-
-    let store = Arc::new(Store::new(StoreInternal {
-        db_pool: db_pool,
-        redis: redis_client,
-    }));
+    let store = create_store().await;
 
     Router::new()
         .route(
@@ -105,4 +93,25 @@ pub async fn create_app() -> Router {
         .route("/campaign/:id", routing::get(campaign::get_campaign))
         .route("/draw", routing::post(draw::draw))
         .with_state(store)
+}
+
+pub async fn create_store() -> Arc<Store> {
+    dotenv().ok();
+
+    let redis_client = redis::Client::open("redis://localhost/").expect("Redis connection failed");
+
+    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL missing in .env");
+    let db_pool = sqlx::postgres::PgPool::connect(&db_url)
+        .await
+        .expect("Failed to connect to DB");
+
+    sqlx::migrate!("./migrations")
+        .run(&db_pool)
+        .await
+        .expect("Failed to migrate DB");
+
+    Arc::new(Store::new(StoreInternal {
+        db_pool,
+        redis: redis_client,
+    }))
 }

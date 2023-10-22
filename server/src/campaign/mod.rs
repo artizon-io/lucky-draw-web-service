@@ -108,7 +108,7 @@ pub(super) struct CreateCampaignPayloadCouponType {
     path = "/campaign",
     request_body = CreateCampaignPayload,
     responses(
-        (status = 200, description = "Campaign created successfully"),
+        (status = 201, description = "Campaign created successfully", body = Campaign),
         (status = 409, description = "Sum of probabilities of coupon types exceed 1", body = CampaignError)
     )
 )]
@@ -164,8 +164,8 @@ pub(super) async fn create_campaign(
     #[allow(deprecated)]
     sqlx::query!(
         "--sql
-            insert into campaign_coupon_types (campaign_id, description, probability, total_quota, daily_quota)
-            select * from unnest($1::int[], $2::text[], $3::float4[], $4::int[], $5::int[]);
+            insert into campaign_coupon_types (campaign_id, description, probability, total_quota, daily_quota, current_quota)
+            select * from unnest($1::int[], $2::text[], $3::float4[], $4::int[], $5::int[], $4::int[]);
         ",
         &campaign_ids[..],
         &descriptions[..],
@@ -179,9 +179,5 @@ pub(super) async fn create_campaign(
 
     tx.commit().await.unwrap();
 
-    (
-        StatusCode::OK,
-        Json(format!("Successfully created campaign {}", campaign_id)),
-    )
-        .into_response()
+    (StatusCode::CREATED, Json(new_compaign)).into_response()
 }

@@ -10,15 +10,15 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::store::Store;
-pub use user::User;
+use crate::types::User;
 
-mod user;
+mod test;
 
 #[derive(Serialize, Deserialize, ToSchema)]
 pub(super) enum UserError {
-    #[schema(example = "User already exists")]
+    #[schema(example = "User ID already exists")]
     Conflict(String),
-    #[schema(example = "id = 1")]
+    #[schema(example = "User ID doesn't exist")]
     NotFound(String),
 }
 
@@ -30,55 +30,64 @@ pub(super) enum UserError {
     )
 )]
 pub(super) async fn list_users(State(store): State<Arc<Store>>) -> Json<Vec<User>> {
-    let db_pool = store.lock().await.clone();
+    let db_pool = store.lock().await.db_pool.clone();
 
-    let q = r"--sql
-        select *
-        from users;
-    ";
-
-    let users = sqlx::query_as(q).fetch_all(&db_pool).await.unwrap();
+    let users = sqlx::query_as!(
+        User,
+        "--sql
+            select *
+            from users;
+        "
+    )
+    .fetch_all(&db_pool)
+    .await
+    .unwrap();
 
     Json(users)
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub(super) struct CreateUserPayload {
+    pub phone: String,
 }
 
 #[utoipa::path(
     post,
     path = "/user",
-    request_body = User,
+    request_body = CreateUserPayload,
     responses(
         (status = 201, description = "User created successfully", body = User),
-        (status = 409, description = "User already exists", body = UserError)
+        (status = 409, description = "Phone number is registered by another user", body = UserError)
     )
 )]
 pub(super) async fn create_user(
     State(store): State<Arc<Store>>,
-    Json(user): Json<User>,
+    Json(payload): Json<CreateUserPayload>,
 ) -> impl IntoResponse {
-    let db_pool = store.lock().await.clone();
+    let db_pool = store.lock().await.db_pool.clone();
 
-    let q = "--sql
-        insert into users (id, phone)
-        values ($1, $2)
-        returning *;
-    ";
+    let request = sqlx::query_as!(
+        User,
+        "--sql
+            insert into users (phone)
+            values ($1)
+            returning *;
+        ",
+        payload.phone,
+    )
+    .fetch_one(&db_pool)
+    .await;
 
-    let q_result = sqlx::query_as::<_, User>(q)
-        .bind(&user.id)
-        .bind(&user.phone)
-        .fetch_one(&db_pool)
-        .await;
-
-    match q_result {
+    match request {
+        Ok(new_user) => (StatusCode::CREATED, Json(new_user)).into_response(),
         Err(_) => (
             StatusCode::CONFLICT,
             Json(UserError::Conflict(format!(
-                "user already exists: {}",
-                user.id
+                "Phone number {} is registered by another user",
+                payload.phone
             ))),
         )
             .into_response(),
-        Ok(user) => (StatusCode::CREATED, Json(user)).into_response(),
     }
 }
 
@@ -87,7 +96,7 @@ pub(super) async fn create_user(
     path = "/user/{id}",
     responses(
         (status = 200, description = "Delete user successfully"),
-        (status = 404, description = "User not found", body = UserError, example = json!(UserError::NotFound(String::from("id = 1"))))
+        (status = 404, description = "User not found", body = UserError, example = json!(UserError::NotFound(String::from("User with ID 1 doesn't exist"))))
     ),
     params(
         ("id" = i32, Path, description = "User id")
@@ -97,19 +106,25 @@ pub(super) async fn delete_user(
     Path(id): Path<i32>,
     State(store): State<Arc<Store>>,
 ) -> impl IntoResponse {
-    let db_pool = store.lock().await.clone();
+    let db_pool = store.lock().await.db_pool.clone();
 
-    let q = "--sql
-        delete from users
-        where id = $1;
-    ";
-
-    let q_result = sqlx::query(q).bind(id).execute(&db_pool).await.unwrap();
+    let q_result = sqlx::query!(
+        "--sql
+            delete from users
+            where id = $1;
+        ",
+        id
+    )
+    .execute(&db_pool)
+    .await
+    .unwrap();
 
     match q_result.rows_affected() {
         0 => (
             StatusCode::NOT_FOUND,
-            Json(UserError::NotFound(format!("id = {id}"))),
+            Json(UserError::NotFound(format!(
+                "User with ID {id} doesn't exist"
+            ))),
         )
             .into_response(),
         _ => StatusCode::OK.into_response(),

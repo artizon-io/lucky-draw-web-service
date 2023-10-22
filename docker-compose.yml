@@ -13,5 +13,16 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data:rw
 
+  cache:
+    container_name: redis
+    image: redis:7.2.2-alpine
+    restart: always
+    ports:
+      - '6379:6379'
+    command: redis-server --save 10 1
+    volumes: 
+      - cache-data:/data
+
 volumes:
   db-data:
+  cache-data:

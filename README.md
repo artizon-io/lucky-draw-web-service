@@ -1,6 +1,12 @@
-# Gusto Media Lab Limited Offsite Test for Backend
+# Lucky Draw Web Service
 
-Task: to build a lucky draw web service
+Problem specification:
+- Each customer can draw multiple times during the period of the campaign; however,
+they are only allowed to draw one time each day
+- Customer must fill in the mobile phone number for reference and SMS
+- There are multiple categories of prizes, for example, $5 Cash Coupon, $2 Cash
+Coupon, and Buy 1 get 1 free coupon. Each category, they have its total quota and
+daily quota
 
 ## Architecture
 

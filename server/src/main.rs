@@ -65,7 +65,7 @@ async fn main() -> Result<(), Error> {
         .merge(Redoc::with_url("/redoc", ApiDoc::openapi()))
         .merge(RapiDoc::new("/api-docs/openapi.json").path("/rapidoc"));
 
-    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080));
+    let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080));
     print!(
         r#"
 -----------------------
@@ -98,7 +98,8 @@ pub async fn create_app() -> Router {
 pub async fn create_store() -> Arc<Store> {
     dotenv().ok();
 
-    let redis_client = redis::Client::open("redis://localhost/").expect("Redis connection failed");
+    let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL missing in .env");
+    let redis_client = redis::Client::open(redis_url).expect("Redis connection failed");
 
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL missing in .env");
     let db_pool = sqlx::postgres::PgPool::connect(&db_url)

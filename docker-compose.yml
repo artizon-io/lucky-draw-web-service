@@ -10,6 +10,8 @@ services:
       POSTGRES_USER: ${DB_USER}
     ports:
       - "5432:5432"
+    expose:
+      - 5432
     volumes:
       - db-data:/var/lib/postgresql/data:rw
 
@@ -18,10 +20,34 @@ services:
     image: redis:7.2.2-alpine
     restart: always
     ports:
-      - '6379:6379'
+      - "6379:6379"
+    expose:
+      - 6379
     command: redis-server --save 10 1
     volumes: 
       - cache-data:/data
+
+  api:
+    container_name: axum
+    build: 
+      context: ./server
+    volumes:
+      - ./server:/usr/src/app
+    # network_mode: host
+    # environment:
+    #   - DATABASE_URL=postgres://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}
+    #   - REDIS_URL=redis://localhost/
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      - REDIS_URL=redis://cache/
+    command: bash -c "sqlx migrate run && cargo run"
+    depends_on:
+      db:
+        condition: service_started
+      cache:
+        condition: service_started
 
 volumes:
   db-data:

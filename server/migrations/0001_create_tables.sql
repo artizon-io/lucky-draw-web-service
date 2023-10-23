@@ -21,10 +21,10 @@ CREATE TABLE campaign_coupon_types (
     FOREIGN KEY (campaign_id) REFERENCES campaigns (id) ON DELETE RESTRICT,
     CHECK (probability <= 1),
     CHECK (probability >= 0),
-    CHECK (total_quota >= 0),
-    CHECK (daily_quota >= 0),
-    CHECK (current_quota >= 0),
-    CHECK (current_daily_quota >= 0)
+    CHECK (total_quota is null or total_quota >= 0),
+    CHECK (daily_quota is null or daily_quota >= 0),
+    CHECK (current_quota is null or current_quota >= 0),
+    CHECK (current_daily_quota is null or current_daily_quota >= 0)
 );
 
 CREATE TABLE campaign_coupons (

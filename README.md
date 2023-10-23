@@ -49,6 +49,23 @@ The reason for this is to avoid having to read the probability distribution from
 1. Decrement the quota of the `Campaign_Coupon_Type` entry. This operation would fail if the quota has already reached `0` (because of the constrait `quota > 0`). If the operation fails, the server would return a "no coupon" message to the user. Note that this is relying on the important assumption that: **once a particular coupon runs out of quota, the probability of winning other remaining coupons will stay unchanged**
 2. Create a coupon entry in the `Campaign_Coupon` table and associate it to the `draw` entry, and return the information about the `coupon` to the user
 
+In order to reset the `current_daily_quota` everyday, when the server tries to decrement the quote of the `Campaign_Coupon_Type` entry, it checks if the `last_drawn_date` is equal to the current date. If this isn't the case, `current_daily_quota` will be reset to the value of `daily_quota`. The SQL:
+
+```sql
+update campaign_coupon_types
+set last_drawn_date = case
+    when (last_drawn_date is null or last_drawn_date != CURRENT_DATE) then CURRENT_DATE
+    else last_drawn_date
+end,
+current_daily_quota = case
+    when (last_drawn_date is null or last_drawn_date != CURRENT_DATE) then daily_quota - 1
+    else current_daily_quota - 1
+end,
+current_quota = current_quota - 1
+where id = $1
+returning *;
+```
+
 **Web server**
 
 I chose to pair Rust with the `axum` web server framework. I have never tried this stack before so I want to challenge myself a bit. Also `axum` supports concurrent DB connections and comes with a connection pool OOTB.
@@ -69,6 +86,13 @@ Prerequisites:
 Run `docker compose up`
 
 The swagger / redoc / rapidoc UI will be available at `localhost:8080/swagger-ui`, `localhost:8080/redoc`, and `localhost:8080/rapidoc` respectively
+
+## Example
+
+1. Create a user with POST `/user`
+2. Create a campaign with POST `/campaign`
+3. Draw with POST `/draw`
+4. (If won,) Redeem with POST `/redeem`
 
 ## Future work
 
